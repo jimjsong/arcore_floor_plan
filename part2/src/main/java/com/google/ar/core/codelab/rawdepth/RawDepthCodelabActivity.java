@@ -16,11 +16,15 @@
 
 package com.google.ar.core.codelab.rawdepth;
 
+import android.graphics.Bitmap;
 import android.opengl.GLES20;
 import android.opengl.GLSurfaceView;
 import android.os.Bundle;
 import android.support.v7.app.AppCompatActivity;
 import android.util.Log;
+import android.view.ViewGroup;
+import android.widget.FrameLayout;
+import android.widget.ImageView;
 import android.widget.Toast;
 import com.google.ar.core.Anchor;
 import com.google.ar.core.ArCoreApk;
@@ -73,12 +77,23 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
   private final DepthRenderer depthRenderer = new DepthRenderer();
   private final BackgroundRenderer backgroundRenderer = new BackgroundRenderer();
 
+  private ImageView overlayImageView;
+
   @Override
   protected void onCreate(Bundle savedInstanceState) {
     super.onCreate(savedInstanceState);
     setContentView(R.layout.activity_main);
     surfaceView = findViewById(R.id.surfaceview);
     displayRotationHelper = new DisplayRotationHelper(/*context=*/ this);
+
+    overlayImageView = new ImageView(this);
+    FrameLayout.LayoutParams params = new FrameLayout.LayoutParams(400, 400);
+    params.gravity = android.view.Gravity.TOP | android.view.Gravity.END;
+    params.topMargin = 20;
+    params.rightMargin = 20;
+    overlayImageView.setLayoutParams(params);
+    overlayImageView.setBackgroundColor(android.graphics.Color.argb(128, 0, 0, 0)); // Semi-transparent background
+    overlayImageView.setZ(1f); // Ensure it's above the surfaceView
 
     // Set up renderer.
     surfaceView.setPreserveEGLContextOnPause(true);
@@ -88,7 +103,17 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
     surfaceView.setRenderMode(GLSurfaceView.RENDERMODE_CONTINUOUSLY);
     surfaceView.setWillNotDraw(false);
 
+    // Add the overlayImageView to your layout
+    ViewGroup rootView = findViewById(android.R.id.content);
+    rootView.addView(overlayImageView);
+
     installRequested = false;
+  }
+
+  // In your render method or wherever you update your AR view
+  private void updateOverlay() {
+    Bitmap heightMapBitmap = DepthData.createHeightMapBitmap();
+    runOnUiThread(() -> overlayImageView.setImageBitmap(heightMapBitmap));
   }
 
   @Override
@@ -229,8 +254,11 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
         float planeHeight = plane.getCenterPose().ty();
 
         // Update floor height if this is the lowest plane found
-        if (planeHeight < floorHeight) {
+        if (floorHeight == Float.MAX_VALUE)
           floorHeight = planeHeight;
+
+        else if (planeHeight < floorHeight) {
+          floorHeight = floorHeight * .9f + planeHeight * .1f;
         }
 
         Log.d(TAG, "Plane found: " + floorHeight);
@@ -286,6 +314,8 @@ public class RawDepthCodelabActivity extends AppCompatActivity implements GLSurf
       // Visualize depth points.
       depthRenderer.update(points);
       depthRenderer.draw(camera);
+
+      updateOverlay();
     } catch (Throwable t) {
       // Avoid crashing the application due to unhandled exceptions.
       Log.e(TAG, "Exception on the OpenGL thread", t);

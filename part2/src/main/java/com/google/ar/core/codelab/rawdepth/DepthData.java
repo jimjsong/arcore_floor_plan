@@ -16,6 +16,10 @@
 
 package com.google.ar.core.codelab.rawdepth;
 
+import android.graphics.Bitmap;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.media.Image;
 import android.opengl.Matrix;
 import android.util.Log;
@@ -29,6 +33,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.FloatBuffer;
 import java.nio.ShortBuffer;
+import java.util.HashMap;
 
 /**
  * Converts depth data from ARCore depth images to 3D pointclouds. Points are added by calling the
@@ -37,6 +42,14 @@ import java.nio.ShortBuffer;
 public class DepthData {
     public static final int FLOATS_PER_POINT = 4; // X,Y,Z,confidence.
 
+    public static float f_min_x = Float.MAX_VALUE, f_min_y = Float.MAX_VALUE, f_min_z = Float.MAX_VALUE,
+            f_max_x = Float.MIN_VALUE, f_max_y = Float.MIN_VALUE, f_max_z = Float.MIN_VALUE;
+
+    private static HashMap<String, Float> heightMap = new HashMap<>();
+
+    public static HashMap<String, Float> getHeightMap() {
+        return heightMap;
+    }
     public static FloatBuffer create(Frame frame, Anchor cameraPoseAnchor, float maxFloorHeight) {
         try {
             Image depthImage = frame.acquireRawDepthImage16Bits();
@@ -138,17 +151,85 @@ public class DepthData {
                 // Applies model matrix to transform point into world coordinates.
                 Matrix.multiplyMV(pointWorld, 0, modelMatrix, 0, pointCamera, 0);
 
-                if (pointWorld[1] < maxFloorHeight * .95) {
-                    points.put(pointWorld[0]); // X.
-                    points.put(pointWorld[1]); // Y.
-                    points.put(pointWorld[2]); // Z.
+                if (pointWorld[1] < maxFloorHeight * .95  && confidenceNormalized > .3) {
+                    float f_x = pointWorld[0];
+                    float f_y = pointWorld[1];
+                    float f_z = pointWorld[2];
+
+                    if (f_x < f_min_x) {
+                        f_min_x = f_x;
+                    }
+                    if (f_x > f_max_x) {
+                        f_max_x = f_x;
+                    }
+                    if (f_y < f_min_y) {
+                        f_min_y = f_y;
+                    }
+                    if (f_y > f_max_y) {
+                        f_max_y = f_y;
+                    }
+                    if (f_z < f_min_z) {
+                        f_min_z = f_z;
+                    }
+                    if (f_z > f_max_z) {
+                        f_max_z = f_z;
+                    }
+
+                    int i_x = (int) (f_x * 100 / 40);
+                    int i_z = (int) (f_z * 100 / 40);
+
+                    String key = i_x + "," + i_z;
+                    heightMap.put(key, f_y);
+
+                    points.put(f_x); // X.
+                    points.put(f_y); // Y.
+                    points.put(f_z); // Z.
                     points.put(confidenceNormalized);
                 }
+
             }
+            Log.d("DepthData",
+                    "f_min_x: " + f_min_x + ", f_min_y: " + f_min_y + ", f_min_z: " + f_min_z +
+                            ", f_max_x: " + f_max_x + ", f_max_y: " + f_max_y + ", f_max_z: " + f_max_z);
         }
 
         Log.d("DepthData", "Number of points: " + points.limit() / FLOATS_PER_POINT);
         points.rewind();
         return points;
+    }
+
+    public static Bitmap createHeightMapBitmap() {
+        Bitmap bitmap = Bitmap.createBitmap(400, 400, Bitmap.Config.ARGB_8888);
+        Canvas canvas = new Canvas(bitmap);
+        canvas.drawColor(Color.TRANSPARENT); // Clear background
+
+        // Calculate scale factors
+        float scaleX = 400f / (f_max_x - f_min_x);
+        float scaleZ = 400f / (f_max_z - f_min_z);
+
+        Paint paint = new Paint();
+        paint.setColor(Color.GREEN);
+        paint.setStyle(Paint.Style.FILL);
+        paint.setStrokeWidth(5f); // Make points larger
+
+        for (HashMap.Entry<String, Float> entry : heightMap.entrySet()) {
+            String[] coords = entry.getKey().split(",");
+            int i_x = Integer.parseInt(coords[0]);
+            int i_z = Integer.parseInt(coords[1]);
+            float f_y = entry.getValue();
+
+            // Convert world coordinates to bitmap coordinates
+            float x = (i_x * 40f / 100f - f_min_x) * scaleX;
+            float z = (i_z * 40f / 100f - f_min_z) * scaleZ;
+
+            // Ensure points are within bounds
+            x = Math.min(Math.max(x, 0), 399);
+            z = Math.min(Math.max(z, 0), 399);
+
+            // Draw a circle instead of a point for better visibility
+            canvas.drawCircle(x, 399 - z, 3f, paint);
+        }
+
+        return bitmap;
     }
 }
